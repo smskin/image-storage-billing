@@ -1,0 +1,152 @@
+version: '2'
+services:
+  console:
+    build:
+      context: ./console
+      args:
+        - APP_CODE_PATH_CONTAINER=${APP_CODE_PATH_CONTAINER}
+        - TZ=${TZ}
+    stdin_open: true
+    tty: true
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+    depends_on:
+      - redis
+      - memcached
+      - mariadb
+    links:
+      - redis
+      - memcached
+      - mariadb
+    networks:
+      - local
+  nginx:
+    build:
+      context: ./nginx
+      args:
+        - APP_CODE_PATH_CONTAINER=${APP_CODE_PATH_CONTAINER}
+        - TZ=${TZ}
+    ports:
+      - 127.0.0.1:${NGINX_HOST_PORT}:80
+    restart: always
+    expose:
+      - 80
+    environment:
+      - VIRTUAL_HOST
+    labels:
+      - traefik.enable=true
+      - traefik.domain=${VIRTUAL_HOST}
+      - traefik.backend=${TRAEFIK_BACKEND_ALIAS}
+      - traefik.docker.network=webproxy
+      - traefik.frontend.entryPoints=http,https
+      - traefik.port=80
+      - traefix.port=443
+      - traefik.frontend.rule=Host:${VIRTUAL_HOST}
+      - traefik.frontend.headers.SSLRedirect=true
+      - traefik.frontend.headers.SSLHost=${VIRTUAL_HOST}
+      - traefik.frontend.headers.SSLForceHost=true
+      - traefik.weight=1
+    depends_on:
+      - php-fpm
+    volumes:
+      - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+      - ${DATA_PATH_HOST}/nginx/logs:/var/log/nginx
+      - sockets:/sockets
+    links:
+      - php-fpm
+    networks:
+      - webproxy
+      - local
+  mariadb:
+    build:
+      context: ./mariadb
+      args:
+        - TZ=${TZ}
+    ports:
+      - 127.0.0.1:${MARIADB_HOST_POST}:3306
+    restart: always
+    environment:
+      - MYSQL_ALLOW_EMPTY_PASSWORD
+      - MYSQL_DATABASE
+      - MYSQL_USER
+      - MYSQL_PASSWORD
+    volumes:
+      - ${DATA_PATH_HOST}/mariadb/data:/var/lib/mysql
+    labels:
+      - traefik.enable=false
+    networks:
+      - local
+  redis:
+    build:
+      context: ./redis
+      args:
+        - TZ=${TZ}
+    command: redis-server /etc/redis.conf
+    restart: always
+    volumes:
+      - ${DATA_PATH_HOST}/redis/data:/data
+    labels:
+      - traefik.enable=false
+    networks:
+      - local
+  memcached:
+    image: memcached:latest
+    restart: always
+    labels:
+      - traefik.enable=false
+    networks:
+      - local
+  php-fpm:
+    build:
+      context: ./php-fpm
+      args:
+        - APP_CODE_PATH_CONTAINER=${APP_CODE_PATH_CONTAINER}
+        - TZ=${TZ}
+    restart: always
+    environment:
+      - XDEBUG
+    volumes_from:
+      - console
+    volumes:
+    - sockets:/sockets
+    depends_on:
+      - console
+      - redis
+      - memcached
+      - mariadb
+    links:
+      - redis
+      - memcached
+      - mariadb
+    labels:
+      - traefik.enable=false
+    networks:
+      - local
+  supervisor:
+    build:
+      context: ./supervisor
+      args:
+        - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
+    restart: always
+    volumes_from:
+      - console
+    volumes:
+      - ${DATA_PATH_HOST}/supervisor/logs:/var/log/supervisor
+    depends_on:
+      - console
+      - redis
+      - memcached
+      - mariadb
+    links:
+      - redis
+      - memcached
+      - mariadb
+    networks:
+      - local
+volumes:
+  sockets:
+networks:
+  local:
+    driver: bridge
+  webproxy:
+    external: true
